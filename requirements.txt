@@ -1,0 +1,13 @@
+beautifulsoup4
+lxml
+certifi
+matplotlib
+mpl-finance
+numpy
+pandas
+pyparsing
+python-dateutil
+pytz
+quickfix
+six
+soupsieve
