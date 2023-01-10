@@ -2,7 +2,7 @@ __all__ = ['BaseFixClient']
 #import time
 import datetime as dt
 import quickfix as fix 
-
+import quickfix42 as fix42 
 from fixapp import FixDecoder, print0, printv, printvv, printvvv, unicode_fix
 
 
@@ -20,8 +20,9 @@ class BaseFixClient(fix.Application):
     session_ids = [] 
     #Keep track of orders and IDs
     ORDERS_DICT   = {}
+    transaction_list   = []
     LASTEST_ORDER = {}
-    
+    LASTEST_ORDER_ID=0
     
     
     #Keep track of orders and ids
@@ -29,9 +30,19 @@ class BaseFixClient(fix.Application):
     open_orders = []
 
     '''=========================================================================
-    Internal message methdos
+    Internal message methods
     '''
-
+    def get_any_tag(self,message, tag):
+        '''general purpose tag value extractor'''
+        try:
+            val = message.getField(tag)
+        except:
+            try:
+                val = message.getHeader().getField(tag)
+            except:
+                print("Failed to read tag '{}' from message".format(tag))
+                return -1
+        return val
 
     def onCreate(self, sessionID):
         return
@@ -39,40 +50,65 @@ class BaseFixClient(fix.Application):
 
     def onLogon(self, sessionID):
         self.sessionID = sessionID
-        print('Q:reset sequence numberson both sides ')
+        # print('on Logon')
         # self.resetSeqLogOn()
         return
 
 
     def onLogout(self, sessionID):
+        # print("\n onLogout")
         #fix.Session.lookupSession(sessionID).logout();
         return
 
 
     def toAdmin(self, message,sessionID):
+        fix_str = unicode_fix(message.toString())
+        # print("\n toAdmin: \n{}".format(fix_str))
         return
 
 
     def fromAdmin(self, message, sessionID):
         fix_str = unicode_fix(message.toString())
-        print("\nIncoming Msg (fromAdmin):\n{}".format(fix_str))
+        # print("\n fromAdmin: Incoming Msg (fromAdmin):\n{}".format(fix_str))
         # printvv("\nIncoming Msg (fromAdmin):\n{}".format(fix_str))
-        self.decoder.print_report(message)
+        msg_type,report=self.decoder.print_report(message) 
+        if msg_type=='8':
+            ExecType=report["ExecType"]
+            if ExecType == '0':
+                OrderID=report['OrderID']
+                ClOrdID=report['ClOrdID']
+                # print('adding orderID to json file',OrderID)
+                self.add_OrderID_37_into_json_oder(ClOrdID,OrderID)
+            if ExecType in ['1','2']:
+                self.transaction_list.append(report)
         return
 
 
     def toApp(self, message, sessionID):
         fix_str = unicode_fix(message.toString())
+        # print("\n toApp: \n{}".format(fix_str))
         return
 
     def fromApp(self, message, sessionID):
         '''Capture Messages coming from the counterparty'''
-        print("sessionID.toString)fromApp",sessionID)
+        
+        # er=fix42.ExecutionReport(message)
+        # print("er",unicode_fix(er.toString()))
+        
         fix_str = unicode_fix(message.toString())
-        self.decoder.print_report(message)
+        # print("\n fromApp ",fix_str) 
+        msg_type,report=self.decoder.print_report(message) 
+        if msg_type=='8':
+            ExecType=report["ExecType"]
+            if ExecType == '0':
+                OrderID=report['OrderID']
+                ClOrdID=report['ClOrdID']
+                # print('adding orderID to json file',OrderID)
+                self.add_OrderID_37_into_json_oder(ClOrdID,OrderID)
+            if ExecType in ['1','2']:
+                self.transaction_list.append(report)
         return
-
-
+    
     def genOrderID(self):
         self.orderID += 1
         return str(self.orderID) + '-' + str(dt.datetime.timestamp(dt.datetime.utcnow()))
@@ -82,7 +118,7 @@ class BaseFixClient(fix.Application):
         return str(self.execID) + '-' + str(dt.datetime.timestamp(dt.datetime.utcnow()))
     def increase_seqnum(self):
         self.CurrentSeqNum+=1
-
+    
     def _make_standard_header(self,MsgType):
         '''Make a standard header for Fortex FIX 4.4 Server based on their instruction file.
         A standard header for Fortex has the following tags (first 6 tags must be in this exact order):
@@ -130,14 +166,17 @@ class BaseFixClient(fix.Application):
         for tag in wanted_tags:
             order_object[tag] = msg.getField(tag)
 
-        id_tag   = 11    #tag for ClOrdID
-        order_id = msg.getField(id_tag)
-        order_object[id_tag] = order_id                   #store the id inside as well
+        ClOrdID = msg.getField(11)
+        order_object[11] = ClOrdID                   #store the id inside as well
 
-        self.ORDERS_DICT[order_id] = order_object         #add to list of order info using the ID as key
+        self.ORDERS_DICT[ClOrdID] = order_object         #add to list of order info using the ID as key
         self.LASTEST_ORDER         = order_object         #remember the latest order for easier accessing
-        printv("\n=====> Order recorded in memory with id = {}\n".format(order_id))
-    
+        
+        printv("\n=====> Order recorded in memory with id = {}\n".format(ClOrdID))
+    def add_OrderID_37_into_json_oder(self,ClOrdID,OrderID):
+        self.LASTEST_ORDER_ID=OrderID
+        self.ORDERS_DICT[ClOrdID]["OrderID"]=OrderID
+
     def _retrieve_json_order(self, id):
         if id == -1 or id == '-1' or id == 'latest':
             return self.LASTEST_ORDER
@@ -224,11 +263,14 @@ class BaseFixClient(fix.Application):
         #----Load data from previous order using the stringField method of Quickfix instead of calling by specific tag names
         for tag in wanted_tags:
             value = order_object[tag]
-            if tag == 11 or tag == '11':                              #we change 11 to 41 because 11 will be used for this order's id, while 41 is the id of the order we want to cancel
-                tag = fix.OrigClOrdID().getField()                    #Get the tag number (it should be 41 but this is more resistant to changes in protocol)
+            if tag == 11 or tag == '11':                             
+                tag = fix.OrigClOrdID().getField()                    #tag 41 of cancel request message is the tag 11 of order message
             msg.setField(fix.StringField(tag,value))
+        # print(order_object)
+        if 'OrderID' in order_object.keys(): # some case, order_object wasn't recorded by time of cancel request
+            msg.setField(fix.StringField(37,order_object['OrderID']))
+        # msg.setField(fix.StringField(37,self.LASTEST_ORDER_ID))
 
-        #----Add transaction time
         msg.setField(fix.StringField(60,(dt.datetime.utcnow().strftime("%Y%m%d-%H:%M:%S.%f"))[:-3]))    #60 = transaction time
 
         return msg
@@ -245,8 +287,6 @@ class BaseFixClient(fix.Application):
         msg.setField(fix.Side(_side))
 
         return msg
-
-  
     
     '''=========================================================================
     User interface
@@ -265,9 +305,6 @@ class BaseFixClient(fix.Application):
     #     msg = self.standard_new_order()
     #     msg.setField(54,"1") #Side <54> field 
 
-
-
-        
         # kargs['54'] = fix.Side_BUY
         # kargs['40'] = 1
         # msg = self._NewOrderSingle(kargs)
@@ -316,7 +353,6 @@ class BaseFixClient(fix.Application):
 
     #     self._record_json_order(msg,wanted_tags=[40,54,38,55,167])
     #     fix.Sessions.sendToTarget(msg,self.sender,self.target)
-    #     #fix.Session.sendToTarget(msg, self.sender,self.target)
     
 
     
@@ -328,7 +364,7 @@ class BaseFixClient(fix.Application):
     def check_order_status(self,**kargs):
         msg = self._OrderStatusRequest(kargs)
         fix.Session.sendToTarget(msg,self.sender,self.target)
-        #fix.Session.sendToTarget(msg, self.sender,self.target)
+        #
 
 
     
@@ -338,16 +374,12 @@ class BaseFixClient(fix.Application):
         msg.getHeader().setField(fix.MsgType(fix.MsgType_Logout))
 
         fix.Session.sendToTarget(msg, self.sender,self.target)
-        #fix.Session.sendToTarget(msg, self.sender,self.target)
     def resetSeqLogOn(self):
         #send a message to server
         msg = self._make_standard_header(fix.MsgType_Logon)
-        # msg.getHeader().setField(fix.BeginString(fix.BeginString_FIX42))
-        # msg.getHeader().setField(fix.MsgType(fix.MsgType_Logosn))
         msg.getHeader().setField(fix.ResetSeqNumFlag(True))
         msg.setField(98,"0") #Encryp_method
         msg.setField(108,"30") #HeartBtInt
-        # print("msg msg msg",msg)c
         fix.Session.sendToTarget(msg, self.sender,self.target)
         # fix_str = unicode_fix(msg.toString())
         # print("fix_str",    fix_str)

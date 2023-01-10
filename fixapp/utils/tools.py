@@ -1,4 +1,4 @@
-__all__ = ['OrderManager','OrderBook','FixDecoder','PairContainer','OrderedMessage',
+__all__ = ['OrderManager','FixDecoder','PairContainer','OrderedMessage',
            'TagPair','print_fix_string','unicode_fix','isSymbolTag']
 
 from bs4 import BeautifulSoup as Soup     #to parse XML and other files
@@ -9,7 +9,7 @@ import datetime as dt
 from datetime import datetime 
 from . import print0,printv,printvv,printvvv 
 import os
-
+import time
 
 class OrderManager(object):
     '''
@@ -45,79 +45,6 @@ class OrderManager(object):
         if id in self.history:
             return False
         return True
-
-class OrderBook(object):
-    '''Collects order book information from a session (for example, from a Data Market Refresh)'''
-    iter_index = 0
-    def __init__(self, interval='1-Min'):
-        self.bids      = []
-        self.asks      = []
-        self.size_bids = []
-        self.size_asks = []
-
-        self.timestamp = []
-
-        self.interval  = interval
-        self.symbol    = None
-
-    def add_bid(self,bid,size):
-        self.bids.append(bid)
-        self.size_bids.append(size)
-
-    def add_ask(self,ask,size):
-        self.asks.append(ask)
-        self.size_asks.append(size)
-
-    def add_timestamp(self,time_stamp):
-        self.timestamp.append(time_stamp)
-
-    def add_bid_offer(self,key,bid,offer):
-        try:
-            self.bid_offers[key] = [bid,offer]
-        except KeyError as err:
-            print(err)
-
-    def clear_book(self):
-        self.bids.clear()
-        self.asks.clear()
-        self.size_bids.clear()
-        self.size_asks.clear()
-
-    def save_ohlc_data(self):
-        pass
-    def save_book(self,output_file):
-        data = pd.DataFrame({"Bid":self.bids,
-                             "Size_bids":self.size_bids,
-                             "Ask" :self.asks,
-                             "Size_asks":self.size_asks,
-                             "Time Sent":self.timestamp})
-
-        output_name = datetime.utcnow().strftime("%Y%m%d-%H:%M:%S.%f")[:-3] + '.csv'
-        data.to_csv(output_name,index=False,sep=',')
-        printv("Market Data saved to {}".format(output_name))
-        return output_name
-
-    def plot(self):
-        pass
-
-    def __len__(self):
-        return len(self.timestamp)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        '''The schema of the data can change. For now I will keep it simple. Data will come as bid and ask'''
-        i = self.iter_index
-
-        t = self.timestamp[i]
-        b = self.bids[i]
-        a = self.asks[i]
-
-        self.iter_index += 1
-
-        return t,b,a
-
 
 #===============================================================================
 def get_any_tag(message, tag):
@@ -190,7 +117,8 @@ class FixDecoder(object):
                               '4' : 'Unable to process Order Mass Cancel Request <q>',
                               '5' : 'OrigOrdModTime <586> (586) did not match last TransactTime <60> (60) of order',
                               '6' : 'Duplicate ClOrdID <11> () received',
-                              '99': 'Other'}
+                              '99': 'Other',
+                              -1: 'Unknown reason'}
 
         self._CxlRejResponseTo = {'tag':'434',
                                   '1'  : 'Order Cancel Request <F>',
@@ -269,7 +197,7 @@ class FixDecoder(object):
             try:
                 val = message.getHeader().getField(tag)
             except:
-                print("Failed to read tag '{}' from message".format(tag))
+                # print("Failed to read tag '{}' from message".format(tag))
                 return -1
         return val
 
@@ -313,8 +241,10 @@ class FixDecoder(object):
     def extract_msg_data(self,msg_type,message):
         if msg_type == '8':
             self.extract_execution_report(message)
-    def print_report(self,message):
 
+        
+    def print_report(self,message):
+        # time.sleep(5)
         print = printvv
 
         #=======================================================================
@@ -323,65 +253,84 @@ class FixDecoder(object):
         print('='*80)
         if msg_type == '0':
             print("HeartBeat (35='0')")
-            pass   #a zero means a heartbeat
+            return msg_type,0
+            # pass   #a zero means a heartbeat
 
         elif msg_type == '3': 
-            import pdb;pdb.set_trace()  #
+             #
             error,ref_tag,ref_MsgType = self._get_error_report(message)
             #ref_MsgType = self.get_any_tag(372)     #the message type being referenced by the error
             print("Message rejected (35='3')")
             print(self.format_wrapper("Reference Tag (tag 371): {}",ref_tag))
             print(self.format_wrapper("Reference Message type (tag 372): {}",ref_MsgType))
             print(self.format_wrapper("Reason (tag 58):\n {}",self._get_text(message)))
-            #print("Reference Tag (tag 371): {}".format(ref_tag))
-            #print("Reference Message type (tag 372): {}".format(ref_MsgType))
-            #print("reason (tag 58): {}".format(error))
-
+            print("Reference Tag (tag 371): {}".format(ref_tag))
+            print("Reference Message type (tag 372): {}".format(ref_MsgType))
+            print("reason (tag 58): {}".format(error))
+            return msg_type,0
 
         elif msg_type == '5':           #this is a logout message
-            #print("Logout Message (35={})".format(msg_type))           #capturing this message. Now it is simply passing it but just uncomment if one wishing to print before logging out
-            pass
+            print("Logout Message (35={})".format(msg_type)) 
+            return msg_type,0
 
-        elif msg_type == '8':
-            execType      = self.get_any_tag(message,150)       #
-            ord_status    = self.get_any_tag(message,39)        #tells if the order was executed
-            quant_fillied = self.get_any_tag(message,14)        #qunatity filled from the order
-            not_filled    = self.get_any_tag(message,151)
-            exchange_rate = self.get_any_tag(message,9329)
-            commission    = self.get_any_tag(message,12)        #comission charged by broker on this trade
+        elif msg_type == '8': #Execution report
 
-            print("Execution Report (35='{}')".format(msg_type))
-            print(self.format_wrapper("Execution Type (tag 150): '{}' => {}", execType,self._ExecType[execType]))
-            print(self.format_wrapper("Order Status (tag 39): '{}' => {}",ord_status,self._OrderStatus[ord_status]))
-            print(self.format_wrapper("Quantity filled (tag 14): {}",quant_fillied))
-            print(self.format_wrapper("Quantity NOT filled (tag 151): {}",not_filled))
-            print(self.format_wrapper("USD Exchange rate (tag 9329): {}", exchange_rate))
-            print(self.format_wrapper("Commission paid (tag 12): {}",commission))
+            OrderID=self.get_any_tag(message,37) #Unique identifier for Order as assigned by broker
+            ExecID=self.get_any_tag(message,17)
+            OrdStatus=self.get_any_tag(message,39) 
+            # 0 = New; 1 = Partially filled;2 = Filled;3 = Done for day;4 = Canceled; 6 = Pending Cancel (e.g. result of Order Cancel Request <F>);7 = Stopped
+            ExecType=self.get_any_tag(message,150) 
+            ClOrdID=self.get_any_tag(message,11) 
+            # Describes the specific ExecutionRpt <8> (i.e. Pending Cancel) while OrdStatus <39> will always identify the current order status (i.e. Partially Filled);
+            # 0 = New; 1 = Partially filled;2 = Filled;3 = Done for day;4 = Canceled; 6 = Pending Cancel (e.g. result of Order Cancel Request <F>);7 = Stopped
+            CumQty=self.get_any_tag(message,14) #Total number of shares filled.
+
+            Symbol=self.get_any_tag(message,55)
+            Side=self.get_any_tag(message,54) #1=Buy 2=Sell
+            LastShares=self.get_any_tag(message,32) #Quantity of shares bought/sold on this (last) fill
+            LastPx=self.get_any_tag(message,31) # Price of this (last) fill
+
+            
+            # print("Execution Report (35='{}')".format(msg_type))
+            # print(self.format_wrapper("Execution Type (tag 150): '{}' => {}", ExecType,self._ExecType[ExecType]))
+            print(self.format_wrapper("Order Status (tag 39): '{}' => {}",OrdStatus,self._OrderStatus[OrdStatus]))
+            # print(self.format_wrapper("Quantity filled (tag 14): {}",quant_fillied))
+            # print(self.format_wrapper("Quantity NOT filled (tag 151): {}",not_filled))
+            # print(self.format_wrapper("USD Exchange rate (tag 9329): {}", exchange_rate))
+            # print(self.format_wrapper("Commission paid (tag 12): {}",commission))
             print(self.format_wrapper("Text (tag 58):\n {}",self._get_text(message)))
-            print("\n")
+            return msg_type, {'ExecType':ExecType,'OrderID':OrderID,'ClOrdID':ClOrdID,'Side':Side,'Symbol':Symbol,'LastPx':float(LastPx),'LastShares':float(LastShares)}
 
         elif msg_type == '9':
-            original_id       = self.get_any_tag(message,41)
+
+            # OrderID= self.get_any_tag(message,37) #Unique identifier for Order as assigned by broker.
+            # OrdStatus = self.get_any_tag(message,39) #Identifies current status of order.
+            # 0 = New; 1 = Partially filled;2 = Filled;3 = Done for day;4 = Canceled; 6 = Pending Cancel (e.g. result of Order Cancel Request <F>);7 = Stopped ;8 = Rejected
+            
+            
+            original_id       = self.get_any_tag(message,41) #ClOrdID <11> of the previous order
             order_status      = self.get_any_tag(message,39)
             reject_reason     = self.get_any_tag(message,102)
-            reject_responseTo = self.get_any_tag(message,434)
+            # reject_responseTo = self.get_any_tag(message,434)
             id_by_broker      = self.get_any_tag(message,37)        #order id assigned by the broker
-            ClOrdID           = self.get_any_tag(message,11)        #order id for client order getting rejected
+            # ClOrdID           = self.get_any_tag(message,11)        #order id for client order getting rejected
 
             print("Order Cancel Reject (35={})".format(msg_type))
             print(self.format_wrapper("ID of order to be canceled: {}",original_id))
             print(self.format_wrapper("ID given by broker (tag 37): {}",id_by_broker))
-            print(self.format_wrapper("ID of client order (ClOrdID tag 11): {}",ClOrdID))
+            # print(self.format_wrapper("ID of client order (ClOrdID tag 11): {}",ClOrdID))
             print(self.format_wrapper("Order Status (tag 39): '{}' => {}'",order_status,self._OrderStatus[order_status]))
             print(self.format_wrapper("Reject reason (tag 102): '{}' => {}",reject_reason,self._CxlRejReason[reject_reason]))
-            print(self.format_wrapper("Reject ResponseTo (tag 434): '{}' => {}",reject_responseTo,self._CxlRejResponseTo[reject_responseTo]))
-            print()
+            # print(self.format_wrapper("Reject ResponseTo (tag 434): '{}' => {}",reject_responseTo,self._CxlRejResponseTo[reject_responseTo]))
+            # print()
+            return msg_type,0 
 
         elif msg_type == 'A':
             print("Logon Message (35='A')")
-
+            return msg_type,0   
         else:
             print("Message Type 35='{}' NOT IMPLEMENTED".format(msg_type))
+            return msg_type,0 
 
 #===============================================================================
 

@@ -139,7 +139,7 @@
    <field name='TradingSessionID' required='N' />
   </message>
   <message name='ExecutionReport' msgtype='8' msgcat='app'>
-   <field name='OrderID' required='N' />
+   <field name='OrderID' required='Y' />
    <field name='SecondaryOrderID' required='N' />
    <field name='ClOrdID' required='N' />
    <field name='OrigClOrdID' required='N' />
@@ -162,7 +162,7 @@
    <field name='Account' required='N' />
    <field name='SettlmntTyp' required='N' />
    <field name='FutSettDate' required='N' />
-   <field name='Symbol' required='N' />
+   <field name='Symbol' required='Y' />
    <field name='SymbolSfx' required='N' />
    <field name='SecurityID' required='N' />
    <field name='IDSource' required='N' />
@@ -181,7 +181,7 @@
    <field name='SecurityDesc' required='N' />
    <field name='EncodedSecurityDescLen' required='N' />
    <field name='EncodedSecurityDesc' required='N' />
-   <field name='Side' required='N' />
+   <field name='Side' required='Y' />
    <field name='OrderQty' required='N' />
    <field name='CashOrderQty' required='N' />
    <field name='OrdType' required='N' />
@@ -248,7 +248,7 @@
    <field name='ListID' required='N' />
    <field name='Account' required='N' />
    <field name='TransactTime' required='N' />
-   <field name='CxlRejResponseTo' required='N' />
+   <field name='CxlRejResponseTo' required='Y' />
    <field name='CxlRejReason' required='N' />
    <field name='Text' required='N' />
    <field name='EncodedTextLen' required='N' />
